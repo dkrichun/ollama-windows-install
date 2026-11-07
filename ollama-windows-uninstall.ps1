@@ -122,7 +122,7 @@ $OllamaTMDir  = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'OllamaTM'))
 
 function Write-Step([string]$msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Confirm-Action([string]$Prompt) {
-    if ($Force) { Write-Host "  (Force) $Prompt → да"; return $true }
+    if ($Force) { Write-Host "  (Force) $Prompt -> да"; return $true }
     $ans = Read-Host "$Prompt [y/N]"
     return ($ans -eq 'y')
 }
@@ -137,14 +137,14 @@ function Find-Nssm {
 function Remove-FromMachinePath {
     param([string]$Dir)
     $current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    if ($null -eq $current -or $current.Trim() -eq '') { Write-Host '  ℹ PATH не задан'; return }
+    if ($null -eq $current -or $current.Trim() -eq '') { Write-Host '  [INFO] PATH не задан'; return }
     $parts = $current -split ';' | Where-Object { $_ -ne '' }
     $target = $Dir.TrimEnd('\')
     $kept = $parts | Where-Object { $_.TrimEnd('\') -ne $target }
-    if ($kept.Count -eq $parts.Count) { Write-Host "  ℹ $Dir в PATH не найден"; return }
+    if ($kept.Count -eq $parts.Count) { Write-Host "  [INFO] $Dir в PATH не найден"; return }
     [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'Machine')
-    Write-Host "  ✓ $Dir удалён из PATH"
-    Write-Host '  ℹ Изменения вступят в силу в новых консолях.'
+    Write-Host "  [OK] $Dir удалён из PATH"
+    Write-Host '  [INFO] Изменения вступят в силу в новых консолях.'
 }
 
 try {
@@ -161,18 +161,18 @@ try {
         }
         if ($nssmExe) { & $nssmExe remove $ServiceName confirm 2>&1 | Out-Null }
         if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { & sc.exe delete $ServiceName | Out-Null; Start-Sleep -Seconds 1 }
-        Write-Host '  ✓ Служба удалена'
+        Write-Host '  [OK] Служба удалена'
     } else {
-        Write-Host '  ℹ Службы нет'
+        Write-Host '  [INFO] Службы нет'
     }
 
     Write-Step 'Правило брандмауэра'
     $rules = Get-NetFirewallRule -DisplayName "Ollama API*" -ErrorAction SilentlyContinue
     if ($rules) {
         $rules | Remove-NetFirewallRule
-        Write-Host "  ✓ Удалено правил: $($rules.Count)"
+        Write-Host "  [OK] Удалено правил: $($rules.Count)"
     } else {
-        Write-Host '  ℹ Правил не найдено'
+        Write-Host '  [INFO] Правил не найдено'
     }
 
     Write-Step 'Переменная PATH (Machine)'
@@ -188,7 +188,7 @@ try {
     Write-Step 'Переменные окружения (Machine)'
     foreach ($name in @('OLLAMA_HOST','OLLAMA_MODELS')) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
-        Write-Host "  ✓ Удалена $name"
+        Write-Host "  [OK] Удалена $name"
     }
 
     Write-Step "Профиль: $NewProfile"
@@ -196,10 +196,10 @@ try {
         if ($PurgeProfile) {
             if (Confirm-Action "Удалить $NewProfile?") {
                 Remove-Item -LiteralPath $NewProfile -Recurse -Force
-                Write-Host '  ✓ Удалён'
+                Write-Host '  [OK] Удалён'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeProfile)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeProfile)'
         }
     }
 
@@ -208,17 +208,17 @@ try {
         if ($PurgeModels) {
             if (Confirm-Action "Удалить $ModelsDir?") {
                 Remove-Item -LiteralPath $ModelsDir -Recurse -Force
-                Write-Host '  ✓ Удалён'
+                Write-Host '  [OK] Удалён'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeModels)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeModels)'
         }
     }
 
     Write-Step "Бинарники: $OllamaDir"
     if (Test-Path $OllamaDir) {
         if ($PurgeOllama) {
-            Write-Host '  ⚠ Папки install, OllamaTM, logs, Downloads, Backup, Models, .ollama сохраняются'
+            Write-Host '  [WARN] Папки install, OllamaTM, logs, Downloads, Backup, Models, .ollama сохраняются'
             if (Confirm-Action "Удалить бинарники в $OllamaDir (кроме защищённых папок)?") {
                 $protectedPaths = @(
                     $InstallPath
@@ -238,10 +238,10 @@ try {
                 foreach ($item in $itemsToRemove) {
                     Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
                 }
-                Write-Host '  ✓ Бинарники удалены (защищённые папки сохранены)'
+                Write-Host '  [OK] Бинарники удалены (защищённые папки сохранены)'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeOllama)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeOllama)'
         }
     }
 
@@ -250,10 +250,10 @@ try {
         if ($PurgeLogs) {
             if (Confirm-Action "Удалить $LogsDir?") {
                 Remove-Item -LiteralPath $LogsDir -Recurse -Force
-                Write-Host '  ✓ Удалён'
+                Write-Host '  [OK] Удалён'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeLogs)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeLogs)'
         }
     }
 
@@ -262,10 +262,10 @@ try {
         if ($PurgeDownloads) {
             if (Confirm-Action "Удалить $DownloadsDir (включая подпапки версий)?") {
                 Remove-Item -LiteralPath $DownloadsDir -Recurse -Force
-                Write-Host '  ✓ Удалён'
+                Write-Host '  [OK] Удалён'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeDownloads)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeDownloads)'
         }
     }
 
@@ -274,10 +274,10 @@ try {
         if ($PurgeBackup) {
             if (Confirm-Action "Удалить $BackupDir?") {
                 Remove-Item -LiteralPath $BackupDir -Recurse -Force
-                Write-Host '  ✓ Удалён'
+                Write-Host '  [OK] Удалён'
             }
         } else {
-            Write-Host '  ℹ Сохранён (используйте -PurgeBackup)'
+            Write-Host '  [INFO] Сохранён (используйте -PurgeBackup)'
         }
     }
 
