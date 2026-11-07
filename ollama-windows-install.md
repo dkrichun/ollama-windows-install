@@ -9,7 +9,7 @@
 | `ollama-windows-install.ini` | Единый конфиг (пути, сеть, модели, производительность) |
 | `ollama-windows-install.ps1` | Установка, обновление, переустановка и логирование |
 | `ollama-windows-uninstall.ps1` | Удаление службы и очистка |
-| `README.md` | Этот файл |
+| `ollama-windows-install.md` | Этот файл (документация) |
 
 Все четыре файла должны лежать в одной папке — например, `D:\AI\Ollama\install`.
 
@@ -45,7 +45,7 @@
 
 9. **Ротация логов.** Скрипт очищает файлы в `LogsDir` старше `LogRetentionDays` (по умолчанию 7 дней). Управляется через INI.
 
-10. **Автообновление (`-upgrade`).** Параметр позволяет запускать скрипт в Планировщике Windows для автоматической установки последней версии без интерактивных запросов.
+10. **Автообновление (`-Upgrade`).** Параметр позволяет запускать скрипт в Планировщике Windows для автоматической установки последней версии без интерактивных запросов.
 
 11. **Диагностика.** При невозможности запустить службу скрипт выводит `ExitCode`, последние строки логов и результат `nssm dump`, а также пытается запустить `ollama.exe serve` напрямую для выявления причины.
 
@@ -105,3 +105,117 @@
 
 # Полная очистка (включая модели, архивы и бэкапы)
 .\ollama-windows-uninstall.ps1 -PurgeProfile -PurgeModels -PurgeOllama -PurgeLogs -PurgeDownloads -PurgeBackup -Force -NoPause
+```
+
+**Флаги удаления:**
+
+| Флаг | Что удаляет |
+|---|---|
+| `-PurgeProfile` | `D:\AI\Ollama\.ollama` (профиль с ключом id_ed25519) |
+| `-PurgeModels` | `D:\AI\Ollama\Models` (скачанные модели) |
+| `-PurgeOllama` | Бинарники в `D:\AI\Ollama` (папки `install`, `logs`, `Downloads`, `Backup`, `Models`, `.ollama` сохраняются) |
+| `-PurgeLogs` | `D:\AI\Ollama\logs` |
+| `-PurgeDownloads` | `D:\AI\Ollama\Downloads` (включая подпапки версий) |
+| `-PurgeBackup` | `D:\AI\Ollama\Backup` |
+
+**Без флагов** удаляется только служба, правило брандмауэра, PATH и переменные окружения. Все каталоги остаются на месте.
+
+## Структура папок (по умолчанию)
+
+```text
+D:\AI\
+├── Ollama\                       # OllamaDir — бинарники и данные
+│   ├── ollama.exe
+│   ├── install\                  # ВАША ПАПКА СО СКРИПТАМИ (не удаляется)
+│   │   ├── ollama-windows-install.ini
+│   │   ├── ollama-windows-install.ps1
+│   │   ├── ollama-windows-install.log
+│   │   ├── ollama-windows-uninstall.ps1
+│   │   ├── ollama-windows-install.md
+│   │   └── OllamaTM\             # (если используется)
+│   ├── logs\                     # Логи службы (ротация по LogRetentionDays)
+│   │   ├── ollama.out.log
+│   │   └── ollama.err.log
+│   ├── Downloads\                # Кэш дистрибутивов
+│   │   ├── ollama_0.40.12\
+│   │   │   └── ollama-windows-amd64.zip
+│   │   └── nssm_2.25\
+│   │       └── NSSM_v2.25.zip
+│   ├── Backup\                   # Бэкапы бинарников при обновлении
+│   │   └── Ollama_20261028_164058\
+│   ├── Models\                   # Скачанные модели (OLLAMA_MODELS)
+│   └── .ollama\                  # Профиль и ключи (id_ed25519)
+└── (другие ваши папки)
+```
+
+## Конфигурация INI (краткая справка)
+
+Все параметры подробно описаны в самом файле `ollama-windows-install.ini`. Ключевые:
+
+| Секция | Параметр | Назначение |
+|---|---|---|
+| `[paths]` | `OllamaDir` | Куда ставится Ollama |
+| `[paths]` | `ModelsDir` | Куда скачиваются модели |
+| `[paths]` | `DownloadsDir` | Кэш дистрибутивов |
+| `[paths]` | `BackupDir` | Бэкапы при обновлении |
+| `[paths]` | `NssmDir` | Куда распаковывается NSSM |
+| `[paths]` | `LogsDir` | Логи службы (пусто = `OllamaDir\logs`) |
+| `[service]` | `LogRetentionDays` | Сколько дней хранить логи (0 = не удалять) |
+| `[service]` | `AddToPath` | Добавить `OllamaDir` в `PATH` |
+| `[network]` | `Host` | `0.0.0.0` (сеть) или `127.0.0.1` (локально) |
+| `[network]` | `FirewallSubnet` | Подсеть для правила брандмауэра |
+| `[downloads]` | `OllamaVersion` | `ask`, `latest` или конкретная (например `0.40.10`) |
+| `[downloads]` | `KeepDownloads` | Оставлять архивы после распаковки |
+| `[models]` | `Models` | Список моделей для скачивания (через запятую) |
+| `[performance]` | `FlashAttention` | Обязателен при `KvCacheType != f16` |
+| `[performance]` | `KvCacheType` | `f16`, `q8_0` или `q4_0` |
+
+## Диагностика
+
+Если служба не запускается, скрипт автоматически:
+
+1. Выведет текущий `ExitCode` службы.
+2. Прочитает последние строки логов `ollama.err.log` и `ollama.out.log` (включая копии из бэкапа).
+3. Выполнит `nssm dump Ollama` (с корректной OEM-кодировкой для русских сообщений).
+4. Запустит `ollama.exe serve` напрямую на 5 секунд с теми же env-переменными, чтобы показать ошибку в STDOUT/STDERR.
+
+### Типичные проблемы
+
+| Симптом | Решение |
+|---|---|
+| **Порт занят** | `Get-NetTCPConnection -LocalPort 11434 -State Listen` покажет PID |
+| **Нет прав** | Убедитесь, что скрипт запущен от имени Администратора |
+| **Битый архив** | Удалите `Downloads\ollama_<версия>` и запустите с `-ForceDownload` |
+| **Служба падает сразу после старта** | Смотрите `ollama.err.log`, чаще всего — права на `.ollama` или битый бинарник |
+| **Логи растут бесконечно** | Проверьте `LogRetentionDays` в INI (по умолчанию 7) |
+
+## Проверка работы
+
+```powershell
+# Статус службы
+Get-Service Ollama
+
+# Описание службы (должно быть официальное)
+(Get-CimInstance Win32_Service -Filter "Name='Ollama'").Description
+
+# API локально
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+
+# Какие модели в памяти и где (GPU/CPU)
+ollama ps
+
+# Список скачанных моделей
+ollama list
+```
+
+## Безопасность
+
+- **Ollama не имеет встроенной аутентификации.** Ограничивайте `FirewallSubnet` и не выставляйте `Host=0.0.0.0` в публичную сеть. Для недоверенных сегментов — reverse proxy с TLS и Basic Auth (Caddy, Nginx).
+- **`-PurgeProfile` удаляет `id_ed25519`.** Это ключ, которым Ollama подписывает запросы к реестру моделей. Без него он пересоздастся, но если привязывали ключ к чему-то ещё — сохраните его.
+- **Права Full Control выдаются только на `OllamaDir`, `ModelsDir` и `.ollama`.** Остальные папки системы не затрагиваются.
+
+## Лицензия и источники
+
+- Ollama: <https://github.com/ollama/ollama> (MIT)
+- NSSM: <https://nssm.cc> (Public Domain)
+- Форк NSSM (по умолчанию): <https://github.com/dkxce/NSSM>
