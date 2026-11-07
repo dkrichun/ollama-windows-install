@@ -7,6 +7,8 @@
     Читает ollama-windows-install.ini. Останавливает и удаляет службу,
     чистит брандмауэр и переменные окружения. Каталоги (модели, профиль,
     логи, бэкапы, архивы) удаляются только по явным флагам.
+    При -PurgeOllama папки install, logs, Downloads, Backup, Models, .ollama
+    сохраняются.
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +25,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ─── 0. Путь к INI и самоповышение прав ───
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $scriptDir 'ollama-windows-install.ini'
@@ -47,7 +48,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit
 }
 
-# ─── 1. Парсер INI ───
 function Read-IniFile {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw "Не найден INI: $Path" }
@@ -94,7 +94,7 @@ function Get-CfgBool {
 }
 
 $OllamaDir    = Get-Cfg     'paths'   'OllamaDir'        'D:\AI\Ollama'
-$ModelsDir    = Get-Cfg     'paths'   'ModelsDir'        'D:\AI\Models'
+$ModelsDir    = Get-Cfg     'paths'   'ModelsDir'        ''
 $NssmDir      = Get-Cfg     'paths'   'NssmDir'          'C:\Program Files\NSSM'
 $LogsDir      = Get-Cfg     'paths'   'LogsDir'          ''
 $DownloadsDir = Get-Cfg     'paths'   'DownloadsDir'     ''
@@ -104,10 +104,19 @@ $ServiceName  = Get-Cfg     'service' 'ServiceName'      'Ollama'
 $AddToPath    = Get-CfgBool 'service' 'AddToPath'        $true
 $Port         = [int](Get-Cfg 'network' 'Port'           '11434')
 
-if ([string]::IsNullOrWhiteSpace($LogsDir))    { $LogsDir    = Join-Path $OllamaDir 'logs' }
+# Нормализация путей
+if ([string]::IsNullOrWhiteSpace($ModelsDir)) { $ModelsDir = Join-Path $OllamaDir 'Models' } elseif (-not [IO.Path]::IsPathRooted($ModelsDir)) { $ModelsDir = Join-Path $OllamaDir $ModelsDir }
+if ([string]::IsNullOrWhiteSpace($LogsDir)) { $LogsDir = Join-Path $OllamaDir 'logs' } elseif (-not [IO.Path]::IsPathRooted($LogsDir)) { $LogsDir = Join-Path $OllamaDir $LogsDir }
+if ([string]::IsNullOrWhiteSpace($DownloadsDir)) { $DownloadsDir = Join-Path $OllamaDir 'Downloads' } elseif (-not [IO.Path]::IsPathRooted($DownloadsDir)) { $DownloadsDir = Join-Path $OllamaDir $DownloadsDir }
+if ([string]::IsNullOrWhiteSpace($BackupDir)) { $BackupDir = Join-Path $OllamaDir 'Backup' } elseif (-not [IO.Path]::IsPathRooted($BackupDir)) { $BackupDir = Join-Path $OllamaDir $BackupDir }
 if ([string]::IsNullOrWhiteSpace($OllamaHome)) { $OllamaHome = $OllamaDir }
-if ([string]::IsNullOrWhiteSpace($DownloadsDir)) { $DownloadsDir = Join-Path $scriptDir 'Downloads' }
-if ([string]::IsNullOrWhiteSpace($BackupDir))    { $BackupDir = Join-Path $scriptDir 'Backup' }
+
+$ModelsDir    = [IO.Path]::GetFullPath($ModelsDir)
+$LogsDir      = [IO.Path]::GetFullPath($LogsDir)
+$DownloadsDir = [IO.Path]::GetFullPath($DownloadsDir)
+$BackupDir    = [IO.Path]::GetFullPath($BackupDir)
+$NewProfile   = Join-Path $OllamaHome '.ollama'
+$InstallPath  = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'install'))
 
 function Write-Step([string]$msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Confirm-Action([string]$Prompt) {
@@ -126,17 +135,11 @@ function Find-Nssm {
 function Remove-FromMachinePath {
     param([string]$Dir)
     $current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    if ($null -eq $current -or $current.Trim() -eq '') {
-        Write-Host '  ℹ PATH не задан'
-        return
-    }
+    if ($null -eq $current -or $current.Trim() -eq '') { Write-Host '  ℹ PATH не задан'; return }
     $parts = $current -split ';' | Where-Object { $_ -ne '' }
     $target = $Dir.TrimEnd('\')
     $kept = $parts | Where-Object { $_.TrimEnd('\') -ne $target }
-    if ($kept.Count -eq $parts.Count) {
-        Write-Host "  ℹ $Dir в PATH не найден"
-        return
-    }
+    if ($kept.Count -eq $parts.Count) { Write-Host "  ℹ $Dir в PATH не найден"; return }
     [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'Machine')
     Write-Host "  ✓ $Dir удалён из PATH"
     Write-Host '  ℹ Изменения вступят в силу в новых консолях.'
@@ -148,14 +151,12 @@ try {
     if ($svc) {
         $nssmExe = Find-Nssm -Dir $NssmDir
         if ($nssmExe) { & $nssmExe stop $ServiceName 2>&1 | Out-Null } else { & sc.exe stop $ServiceName | Out-Null }
-        
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         while ((Get-Service $ServiceName -ErrorAction SilentlyContinue).Status -ne 'Stopped' -and $sw.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 500 }
         if ((Get-Service $ServiceName -ErrorAction SilentlyContinue).Status -ne 'Stopped') {
             Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
         }
-
         if ($nssmExe) { & $nssmExe remove $ServiceName confirm 2>&1 | Out-Null }
         if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { & sc.exe delete $ServiceName | Out-Null; Start-Sleep -Seconds 1 }
         Write-Host '  ✓ Служба удалена'
@@ -183,41 +184,93 @@ try {
         Write-Host "  ✓ Удалена $name"
     }
 
-    $profileDir = Join-Path $OllamaHome '.ollama'
-    Write-Step "Профиль: $profileDir"
-    if (Test-Path $profileDir) {
-        if ($PurgeProfile) { if (Confirm-Action "Удалить $profileDir?") { Remove-Item -LiteralPath $profileDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeProfile)' }
+    Write-Step "Профиль: $NewProfile"
+    if (Test-Path $NewProfile) {
+        if ($PurgeProfile) {
+            if (Confirm-Action "Удалить $NewProfile?") {
+                Remove-Item -LiteralPath $NewProfile -Recurse -Force
+                Write-Host '  ✓ Удалён'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeProfile)'
+        }
     }
 
     Write-Step "Модели: $ModelsDir"
     if (Test-Path $ModelsDir) {
-        if ($PurgeModels) { if (Confirm-Action "Удалить $ModelsDir?") { Remove-Item -LiteralPath $ModelsDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeModels)' }
+        if ($PurgeModels) {
+            if (Confirm-Action "Удалить $ModelsDir?") {
+                Remove-Item -LiteralPath $ModelsDir -Recurse -Force
+                Write-Host '  ✓ Удалён'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeModels)'
+        }
     }
 
     Write-Step "Бинарники: $OllamaDir"
     if (Test-Path $OllamaDir) {
-        if ($PurgeOllama) { if (Confirm-Action "Удалить $OllamaDir?") { Remove-Item -LiteralPath $OllamaDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeOllama)' }
+        if ($PurgeOllama) {
+            Write-Host '  ⚠ Папки install, logs, Downloads, Backup, Models, .ollama сохраняются'
+            if (Confirm-Action "Удалить бинарники в $OllamaDir (кроме защищённых папок)?") {
+                $protectedPaths = @(
+                    $InstallPath
+                    [IO.Path]::GetFullPath($LogsDir)
+                    [IO.Path]::GetFullPath($DownloadsDir)
+                    [IO.Path]::GetFullPath($BackupDir)
+                    [IO.Path]::GetFullPath($ModelsDir)
+                    [IO.Path]::GetFullPath($NewProfile)
+                    [IO.Path]::GetFullPath($NssmDir)
+                ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+                $itemsToRemove = Get-ChildItem -Path $OllamaDir | Where-Object {
+                    $fp = [IO.Path]::GetFullPath($_.FullName)
+                    $protectedPaths -notcontains $fp
+                }
+                foreach ($item in $itemsToRemove) {
+                    Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                Write-Host '  ✓ Бинарники удалены (защищённые папки сохранены)'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeOllama)'
+        }
     }
 
     Write-Step "Логи: $LogsDir"
     if (Test-Path $LogsDir) {
-        if ($PurgeLogs) { if (Confirm-Action "Удалить $LogsDir?") { Remove-Item -LiteralPath $LogsDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeLogs)' }
+        if ($PurgeLogs) {
+            if (Confirm-Action "Удалить $LogsDir?") {
+                Remove-Item -LiteralPath $LogsDir -Recurse -Force
+                Write-Host '  ✓ Удалён'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeLogs)'
+        }
     }
 
     Write-Step "Архивы: $DownloadsDir"
     if (Test-Path $DownloadsDir) {
-        if ($PurgeDownloads) { if (Confirm-Action "Удалить $DownloadsDir (включая подпапки версий)?") { Remove-Item -LiteralPath $DownloadsDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeDownloads)' }
+        if ($PurgeDownloads) {
+            if (Confirm-Action "Удалить $DownloadsDir (включая подпапки версий)?") {
+                Remove-Item -LiteralPath $DownloadsDir -Recurse -Force
+                Write-Host '  ✓ Удалён'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeDownloads)'
+        }
     }
 
     Write-Step "Бэкапы: $BackupDir"
     if (Test-Path $BackupDir) {
-        if ($PurgeBackup) { if (Confirm-Action "Удалить $BackupDir?") { Remove-Item -LiteralPath $BackupDir -Recurse -Force; Write-Host '  ✓ Удалён' } }
-        else { Write-Host '  ℹ Сохранён (используйте -PurgeBackup)' }
+        if ($PurgeBackup) {
+            if (Confirm-Action "Удалить $BackupDir?") {
+                Remove-Item -LiteralPath $BackupDir -Recurse -Force
+                Write-Host '  ✓ Удалён'
+            }
+        } else {
+            Write-Host '  ℹ Сохранён (используйте -PurgeBackup)'
+        }
     }
 
     Write-Host "`n Удаление завершено." -ForegroundColor Green
