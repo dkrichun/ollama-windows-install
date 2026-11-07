@@ -7,7 +7,7 @@
     Читает ollama-windows-install.ini. Останавливает и удаляет службу,
     чистит брандмауэр и переменные окружения. Каталоги (модели, профиль,
     логи, бэкапы, архивы) удаляются только по явным флагам.
-    При -PurgeOllama папки install, logs, Downloads, Backup, Models, .ollama
+    При -PurgeOllama папки install, OllamaTM, logs, Downloads, Backup, Models, .ollama
     сохраняются.
 #>
 [CmdletBinding()]
@@ -102,6 +102,7 @@ $BackupDir    = Get-Cfg     'paths'   'BackupDir'        ''
 $OllamaHome   = Get-Cfg     'ollama'  'OllamaHome'       $OllamaDir
 $ServiceName  = Get-Cfg     'service' 'ServiceName'      'Ollama'
 $AddToPath    = Get-CfgBool 'service' 'AddToPath'        $true
+$AddNssmToPath = Get-CfgBool 'service' 'AddNssmToPath'   $true
 $Port         = [int](Get-Cfg 'network' 'Port'           '11434')
 
 # Нормализация путей
@@ -117,6 +118,7 @@ $DownloadsDir = [IO.Path]::GetFullPath($DownloadsDir)
 $BackupDir    = [IO.Path]::GetFullPath($BackupDir)
 $NewProfile   = Join-Path $OllamaHome '.ollama'
 $InstallPath  = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'install'))
+$OllamaTMDir  = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'OllamaTM'))
 
 function Write-Step([string]$msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Confirm-Action([string]$Prompt) {
@@ -173,9 +175,14 @@ try {
         Write-Host '  ℹ Правил не найдено'
     }
 
+    Write-Step 'Переменная PATH (Machine)'
     if ($AddToPath) {
-        Write-Step 'Переменная PATH (Machine)'
         Remove-FromMachinePath -Dir $OllamaDir
+    }
+    if ($AddNssmToPath) {
+        foreach ($nssmSub in @('win32','win64')) {
+            Remove-FromMachinePath -Dir (Join-Path $NssmDir $nssmSub)
+        }
     }
 
     Write-Step 'Переменные окружения (Machine)'
@@ -211,10 +218,11 @@ try {
     Write-Step "Бинарники: $OllamaDir"
     if (Test-Path $OllamaDir) {
         if ($PurgeOllama) {
-            Write-Host '  ⚠ Папки install, logs, Downloads, Backup, Models, .ollama сохраняются'
+            Write-Host '  ⚠ Папки install, OllamaTM, logs, Downloads, Backup, Models, .ollama сохраняются'
             if (Confirm-Action "Удалить бинарники в $OllamaDir (кроме защищённых папок)?") {
                 $protectedPaths = @(
                     $InstallPath
+                    $OllamaTMDir
                     [IO.Path]::GetFullPath($LogsDir)
                     [IO.Path]::GetFullPath($DownloadsDir)
                     [IO.Path]::GetFullPath($BackupDir)

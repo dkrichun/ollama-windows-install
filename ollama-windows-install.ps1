@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     Читает ollama-windows-install.ini. Позволяет выбрать версию, сделать бэкап и
-    пересоздать службу. Поддерживает флаг -upgrade для автообновления.
-    Папки install, logs, Downloads, Backup, Models и .ollama сохраняются
+    пересоздать службу. Поддерживает флаг -Upgrade для автообновления.
+    Папки install, logs, Downloads, Backup, Models, .ollama и OllamaTM сохраняются
     в OllamaDir при обновлении/переустановке (не резервируются и не удаляются).
     Ведет лог работы в ollama-windows-install.log.
 #>
@@ -122,6 +122,7 @@ $StartType        = Get-Cfg     'service'   'StartType'            'SERVICE_DELA
 $StartTimeoutSec  = Get-CfgInt  'service'   'StartTimeoutSeconds'  60
 $AppRestartDelay  = Get-CfgInt  'service'   'AppRestartDelay'      10000
 $AddToPath        = Get-CfgBool 'service'   'AddToPath'            $true
+$AddNssmToPath    = Get-CfgBool 'service'   'AddNssmToPath'        $true
 $LogRetentionDays = Get-CfgInt  'service'   'LogRetentionDays'     7
 $HostOnly         = Get-Cfg     'network'   'Host'                 '0.0.0.0'
 $Port             = Get-CfgInt  'network'   'Port'                 11434
@@ -183,15 +184,18 @@ $OllamaHost  = "${HostOnly}:${Port}"
 $NewProfile  = Join-Path $OllamaHome '.ollama'
 $OldProfile  = 'C:\Windows\System32\config\systemprofile\.ollama'
 $InstallPath = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'install'))
+$OllamaTMDir = [IO.Path]::GetFullPath((Join-Path $OllamaDir 'OllamaTM'))
 
 # Защищённые пути: не бэкапятся и не удаляются при обновлении
 $protectedPaths = @(
     $InstallPath
+    $OllamaTMDir
     [IO.Path]::GetFullPath($LogsDir)
     [IO.Path]::GetFullPath($DownloadsDir)
     [IO.Path]::GetFullPath($BackupDir)
     [IO.Path]::GetFullPath($ModelsDir)
     [IO.Path]::GetFullPath($NewProfile)
+    [IO.Path]::GetFullPath($NssmDir)
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
 $preselectedModels = @()
@@ -773,6 +777,19 @@ try {
     }
     Write-Log "  ✓ $nssmExe"
 
+    # Добавляем пути NSSM (win32 и win64) в Machine PATH
+    if ($AddNssmToPath) {
+        Write-Step "Переменная PATH — NSSM (Machine)"
+        foreach ($nssmSub in @('win32','win64')) {
+            $nssmPath = Join-Path $NssmDir $nssmSub
+            if (Test-Path $nssmPath) {
+                Add-ToMachinePath -Dir $nssmPath
+            } else {
+                Write-Log "  ℹ Пропущено (нет папки): $nssmPath" -Color DarkGray
+            }
+        }
+    }
+
     # ══════════════════════════════════════════════════════════════════════
     # Бэкап: копируем только бинарники, защищённые папки не трогаем
     # ══════════════════════════════════════════════════════════════════════
@@ -792,7 +809,7 @@ try {
                 Copy-Item -Path $item.FullName -Destination $backupPath -Recurse -Force
             }
             Write-Log "  ✓ Резервная копия создана: $backupPath" -Color Green
-            Write-Log "  ℹ Папки install, logs, Downloads, Backup, Models, .ollama не копировались (они сохраняются)" -Color DarkGray
+            Write-Log "  ℹ Папки install, OllamaTM, logs, Downloads, Backup, Models, .ollama не копировались" -Color DarkGray
         } catch {
             throw "Не удалось создать резервную копию (файлы заняты?). Ошибка: $_"
         }
@@ -810,7 +827,7 @@ try {
         Write-Log "  ✓ Старые бинарники удалены" -Color Green
     }
 
-    # Ротация логов (старые логи из LogsDir)
+    # Ротация логов
     if ($LogRetentionDays -gt 0 -and (Test-Path $LogsDir)) {
         Write-Log "  → Ротация логов: удаление файлов старше $LogRetentionDays дней из $LogsDir" -Color DarkGray
         $cutoff = (Get-Date).AddDays(-$LogRetentionDays)
@@ -847,10 +864,10 @@ try {
     Write-Log "  ✓ OLLAMA_MODELS=$ModelsDir"
 
     if ($AddToPath) {
-        Write-Step "Переменная PATH (Machine)"
+        Write-Step "Переменная PATH (Ollama)"
         Add-ToMachinePath -Dir $OllamaDir
     } else {
-        Write-Log "`n  ℹ AddToPath=false — PATH не изменяем" -Color DarkGray
+        Write-Log "`n  ℹ AddToPath=false — PATH для Ollama не изменяем" -Color DarkGray
     }
 
     if ($FirewallEnabled -and -not [string]::IsNullOrWhiteSpace($FirewallSubnet)) {
@@ -994,7 +1011,8 @@ try {
         }
     }
 
-    if ($AddToPath) { Write-Log " PATH        : $OllamaDir добавлен (нужна новая консоль)" }
+    if ($AddToPath) { Write-Log " PATH (Ollama): $OllamaDir добавлен (нужна новая консоль)" }
+    if ($AddNssmToPath) { Write-Log " PATH (NSSM)  : $NssmDir\win32 и \win64 добавлены" }
     if ($pulledModels.Count -gt 0) { Write-Log " Загружено   : $($pulledModels -join ', ')" }
     Write-Log " Проверка    : ollama list"
 }
