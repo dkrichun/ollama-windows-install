@@ -275,6 +275,50 @@ function Get-FileNameFromUrl {
     return $Fallback
 }
 
+# --- Кастомная функция скачивания с прогрессом в МБ ---
+function Start-Download {
+    param([string]$Url, [string]$Dest)
+    try {
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.UserAgent = "PowerShell-Ollama-Deploy-Script"
+        $response = $request.GetResponse()
+        $totalBytes = $response.ContentLength
+        $stream = $response.GetResponseStream()
+        $fileStream = [System.IO.File]::Create($Dest)
+        
+        $buffer = New-Object byte[] 1048576 # Буфер 1 МБ
+        $bytesRead = 0
+        $totalRead = 0
+        $lastPercent = -1
+        $fileName = [System.IO.Path]::GetFileName($Dest)
+        
+        while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fileStream.Write($buffer, 0, $bytesRead)
+            $totalRead += $bytesRead
+            
+            if ($totalBytes -gt 0) {
+                $percent = [math]::Min(100, [math]::Floor(($totalRead / $totalBytes) * 100))
+                if ($percent -ne $lastPercent) {
+                    $readMb = [math]::Round($totalRead / 1MB, 1)
+                    $totalMb = [math]::Round($totalBytes / 1MB, 1)
+                    Write-Progress -Activity "Скачивание $fileName" -Status "$readMb MB / $totalMb MB" -PercentComplete $percent
+                    $lastPercent = $percent
+                }
+            } else {
+                $readMb = [math]::Round($totalRead / 1MB, 1)
+                Write-Progress -Activity "Скачивание $fileName" -Status "$readMb MB скачано" -PercentComplete 0
+            }
+        }
+        
+        $fileStream.Close()
+        $stream.Close()
+        $response.Close()
+        Write-Progress -Activity "Скачивание $fileName" -Completed
+    } catch {
+        throw "Ошибка скачивания файла: $_"
+    }
+}
+
 function Get-CachedFile {
     param([string]$Url, [string]$FileName, [string]$SubDir = '', [switch]$ForceRedownload)
     $targetDir = if ([string]::IsNullOrWhiteSpace($SubDir)) { $DownloadsDir } else { Join-Path $DownloadsDir $SubDir }
@@ -298,8 +342,10 @@ function Get-CachedFile {
 
     if (Test-Path -LiteralPath $cachePath) { Remove-Item -LiteralPath $cachePath -Force }
     if (Test-Path -LiteralPath $urlStamp)  { Remove-Item -LiteralPath $urlStamp  -Force }
+    
     Write-Log "  -> Скачивание: $Url"
-    Invoke-WebRequest -Uri $Url -OutFile $cachePath -UseBasicParsing
+    Start-Download -Url $Url -Dest $cachePath
+    
     if ($KeepDownloads) { Set-Content -LiteralPath $urlStamp -Value $Url -NoNewline }
     return $cachePath
 }
